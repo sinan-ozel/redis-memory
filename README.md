@@ -90,17 +90,37 @@ print(conv_mem.state)  # {'step': 1}
 
 ### 🧪 Running Tests
 
-- **With Devcontainer**: Open in VS Code, and use the built-in test tasks.
-- **With Docker directly**:
-  ```sh
-  docker compose up -d redis
-  docker run --rm -it -v $PWD:/workspace -w /workspace python:3.11 bash
-  # Inside container:
-  pip install -e .
-  pytest
-  ```
+**With a Development Container**: Open in VS Code, and start the development
+container. You do not need to install anything other than VS Code and docker.
+(Shift/Cmd + P and check under ``Dev Containers'')
 
-- Or use the tasks in `.vscode/tasks.json` for one-click testing.
+Run the two VS code tasks, test and reformat, before making a PR. These are
+the same as the tests that will run on the CI/CD pipeline.
+
+**Without Anything**: Just write the code, and add your unit tests.
+(Test-Driven Development)
+Run the following command:
+```bash
+docker-compose up --build --remove-orphans --force-recreate --abort-on-container-exit --exit-code-from test
+```
+
+The only requirement is `docker`.
+
+**Virtual Env**: I did not add support for the Python `venv`. However, all of
+the requirements are captured in pyproject.toml. You _should_ be able to use the
+following commands to set up a venv with all of the requirements.
+
+```bash
+python -m venv .venv
+source .venv/bin/activate       # macOS/Linux
+.venv\Scripts\activate          # Windows
+
+pip install --upgrade pip
+pip install .
+pip install .[test]
+pip install .[dev]
+```
+
 
 ### 🤝 Contributing
 
