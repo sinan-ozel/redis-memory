@@ -1,7 +1,6 @@
 ![Tests & Lint](https://github.com/sinan-ozel/redis-memory/actions/workflows/ci.yaml/badge.svg?branch=main)
 ![PyPI](https://img.shields.io/pypi/v/redis-memory.svg)
 ![PyPI downloads](https://img.shields.io/pypi/dm/redis-memory.svg?label=downloads&logo=pypi)
-![PyPI downloads](https://img.shields.io/pypi/dt/redis-memory.svg?label=downloads&logo=pypi)
 ![License](https://img.shields.io/github/license/sinan-ozel/redis-memory.svg)
 
 
