@@ -1,0 +1,10 @@
+services:
+  formatter:
+    build:
+      context: ${HOST_PROJECT_PATH:-.}/..
+      dockerfile: reformat/Dockerfile
+    image: redis-memory-reformat:latest
+    working_dir: /workspace
+    volumes:
+      - ${HOST_PROJECT_PATH:-..}:/workspace
+    command: ./reformat/reformat.sh

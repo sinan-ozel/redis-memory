@@ -2,6 +2,24 @@
   "version": "2.0.0",
   "tasks": [
     {
+      "label": "Reformat Code (Run outside the .devcontainer)",
+      "type": "shell",
+      "command": "docker compose -f reformat/docker-compose.yml up --build --abort-on-container-exit",
+      "problemMatcher": [],
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "focus": false,
+        "panel": "shared",
+        "showReuseMessage": true,
+        "clear": false
+      },
+      "group": {
+        "kind": "build",
+        "isDefault": false
+      }
+    },
+    {
       "label": "Run Unit Tests in Docker (Run outside the .devcontainer)",
       "type": "shell",
       "command": "docker-compose up --build --remove-orphans --force-recreate --abort-on-container-exit --exit-code-from test",
