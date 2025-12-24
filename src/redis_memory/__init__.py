@@ -1,4 +1,4 @@
-__version__ = "0.3.2"
+__version__ = "0.3.3"
 
 import json
 import logging
@@ -30,8 +30,24 @@ class SyncedList(list):
         super().extend(iterable)
         self._parent.sync(self._topmost_key)
 
+    def insert(self, index, item):
+        super().insert(index, item)
+        self._parent.sync(self._topmost_key)
+
     def sync(self, name: str):
         self._parent.sync(self._topmost_key)
+
+    def aslist(self):
+        """Return a plain Python list, recursively converting nested SyncedList/SyncedDict objects."""
+        result = []
+        for item in self:
+            if isinstance(item, SyncedList):
+                result.append(item.aslist())
+            elif isinstance(item, SyncedDict):
+                result.append(item.asdict())
+            else:
+                result.append(item)
+        return result
 
 
 class SyncedDict(dict):
@@ -53,6 +69,18 @@ class SyncedDict(dict):
 
     def sync(self, name: str):
         self._parent.sync(self._topmost_key)
+
+    def asdict(self):
+        """Return a plain Python dict, recursively converting nested SyncedList/SyncedDict objects."""
+        result = {}
+        for key, value in self.items():
+            if isinstance(value, SyncedList):
+                result[key] = value.aslist()
+            elif isinstance(value, SyncedDict):
+                result[key] = value.asdict()
+            else:
+                result[key] = value
+        return result
 
 
 def wrap_sync(obj: (list | dict), parent, topmost_key: str

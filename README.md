@@ -7,15 +7,16 @@
 
 # 🗄️ redis-memory
 
-A Python class for seamless, multiprocessing-safe, persistent key-value storage
+A production-ready Python class for seamless, multiprocessing-safe, persistent key-value storage
 using Redis as a backend. If Redis is unavailable, values are cached locally
 and queued for syncing when Redis comes back online. All values are serialized
 as JSON, and you interact with it using natural Python attribute access.
 
+# Purpose
+
 The intention is to use this with agentic workflows deployed as microservices,
-allowing for multiple instances of the same pod. (Hence the name ``memory'')
-That said, this is probably a good alternative for state management in
-microservice architecture where multiple pods are deployed in parallel.
+allowing for multiple instances of the same pod to share their state.
+
 
 ## ✨ Features
 
@@ -62,16 +63,75 @@ with Memory() as memory:
     print(memory.session)  # "active"
 ```
 
-## 🗂️ Namespacing with ConversationMemory
+## � Auto-Synced Collections
 
-For chatbots or multi-user apps, use `ConversationMemory` to isolate keys:
+Lists and dictionaries are automatically wrapped as `SyncedList` and `SyncedDict`, which sync changes to Redis immediately:
 
 ```python
+mem = Memory()
+mem.items = [1, 2, 3]
+mem.items.append(4)  # Automatically syncs to Redis
+
+mem2 = Memory()
+print(mem2.items)  # [1, 2, 3, 4]
+
+mem.config = {"theme": "dark"}
+mem.config["lang"] = "en"  # Automatically syncs to Redis
+print(mem2.config)  # {'theme': 'dark', 'lang': 'en'}
+```
+
+**Nested structures** work too:
+```python
+mem.data = {"user": {"preferences": {"color": "blue"}}}
+mem.data["user"]["preferences"]["color"] = "red"  # Syncs!
+```
+
+### Converting to Plain Python Types
+
+For libraries that need plain Python objects (serialization, pickling, etc.):
+
+```python
+mem.items = [1, 2, 3]
+plain_list = mem.items.aslist()  # Returns regular list
+
+mem.config = {"key": "value"}
+plain_dict = mem.config.asdict()  # Returns regular dict
+
+# Now you can pickle, deepcopy, or pass to external libraries
+import pickle
+pickle.dump(plain_list, file)  # Works!
+```
+
+## 🗂️ Namespacing
+
+By default, `redis-memory` uses `memory:` as its Redis prefix.
+
+Set that with `REDIS_PREFIX`:
+```.env
+REDIS_PREFIX="my_service_state:"
+```
+
+```python
+from redis_memory import Memory
+
+mem = Memory()
+mem.state = {"step": 1}
+print(mem.state)  # {'step': 1}
+```
+
+## Agents
+
+Use the specific class `ConversationMemory` as an agent memory:
+
+```python
+# TODO: Expand with a real conversation object and/or LiteLLM
+
 from redis_memory import ConversationMemory
 
-conv_mem = ConversationMemory(conversation_id="user123")
-conv_mem.state = {"step": 1}
-print(conv_mem.state)  # {'step': 1}
+conversation_id = uuid()
+
+mem = ConversationMemory(conversation_id=conversation_id)
+mem.messages = messages  # The messages payload to an LLM.
 ```
 
 ## ⚙️ Environment Variables
