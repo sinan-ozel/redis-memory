@@ -145,8 +145,10 @@ jobs:
     permissions:
       id-token: write
       contents: write
+    outputs:
+      is_stable: ${{ steps.set-version.outputs.is_stable }}
     needs: [test, lint, validate-docs, detect_changes]
-    if: needs.detect_changes.outputs.changed == 'true' && github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.event.pull_request.merged == true)  # Only run on push to main or merge to main
+    if: needs.detect_changes.outputs.changed == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
       - name: Checkout Code
         uses: actions/checkout@v3
@@ -198,6 +200,7 @@ jobs:
           if [[ "v$CURRENT_VERSION" != "$LAST_TAG" || "$TAG_COUNT" -eq 0 ]]; then
             echo "VERSION=$CURRENT_VERSION" >> $GITHUB_ENV
             echo "is_stable=true" >> $GITHUB_ENV
+            echo "is_stable=true" >> $GITHUB_OUTPUT
           else
             # Increment minor version for dev version
             MAJOR=$(echo "$CURRENT_VERSION" | cut -d. -f1)
@@ -207,6 +210,7 @@ jobs:
             DEV_VERSION="${MAJOR}.${NEXT_MINOR}.0.dev$(date +%Y%m%d%H%M)"
             echo "VERSION=$DEV_VERSION" >> $GITHUB_ENV
             echo "is_stable=false" >> $GITHUB_ENV
+            echo "is_stable=false" >> $GITHUB_OUTPUT
           fi
 
       - name: Inject Version Into __init__.py
@@ -243,7 +247,7 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     needs: [validate-docs, publish]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    if: needs.publish.result == 'success' && needs.publish.outputs.is_stable == 'true'
     steps:
       - name: Checkout Code
         uses: actions/checkout@v4
