@@ -245,6 +245,9 @@ jobs:
   publish-docs:
     name: Publish Documentation to GitHub Pages
     runs-on: ubuntu-latest
+    concurrency:
+      group: github-pages
+      cancel-in-progress: false
     permissions:
       contents: read
       pages: write
