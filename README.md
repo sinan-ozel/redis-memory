@@ -3,6 +3,7 @@
 ![Downloads](https://static.pepy.tech/badge/redis-memory)
 ![Monthly Downloads](https://static.pepy.tech/badge/redis-memory/month)
 ![License](https://img.shields.io/github/license/sinan-ozel/redis-memory.svg)
+[![Documentation](https://img.shields.io/badge/docs-github--pages-blue)](https://sinan-ozel.github.io/redis-memory/)
 
 
 # 🗄️ redis-memory
