@@ -19,41 +19,32 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v2
-
-      - name: Set up Python
-        uses: actions/setup-python@v2
         with:
-          python-version: "3.11"
+          ref: ${{ github.head_ref || github.ref }}
+          token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Install Formatting Tools
-        run: |
-          pip install --upgrade pip
-          pip install .[dev]
+      - name: Setup Docker
+        uses: docker/setup-buildx-action@v2
 
-      - name: Run YAPF
+      - name: Run Reformat in Docker
         run: |
-          yapf --style=pyproject.toml -r -i .
-
-      - name: Run docformatter
-        run: |
-          docformatter --in-place --recursive --wrap-summaries 72 --wrap-descriptions 72 src/
-
-      - name: Run isort
-        run: |
-          isort src/
+          docker compose -f reformat/docker-compose.yml up --build --abort-on-container-exit
 
       - name: Commit changes
         run: |
           git config --global user.email "github-actions@github.com"
           git config --global user.name "github-actions"
           git add .
-          git commit -m "Auto reformat code via workflow" || echo "No changes to commit"
+          git diff --staged --quiet || git commit -m "Auto reformat code via workflow"
 
       - name: Push changes
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        if: github.event_name == 'pull_request'
         run: |
-          git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}
+          git push origin HEAD:${{ github.head_ref }}
+
+      - name: Push changes
+        if: github.event_name == 'push'
+        run: |
           git push origin HEAD:${{ github.ref }}
 
   lint:
@@ -98,6 +89,21 @@ jobs:
         working-directory: tests
         run: |
           docker-compose up --build --remove-orphans --force-recreate --abort-on-container-exit --exit-code-from test
+
+  validate-docs:
+    name: Validate Documentation
+    runs-on: ubuntu-latest
+    needs: reformat
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v2
+
+      - name: Setup Docker
+        uses: docker/setup-buildx-action@v2
+
+      - name: Run Documentation Validation in Docker
+        run: |
+          docker compose -f docs-validate/docker-compose.yml up --build --abort-on-container-exit
 
   detect_changes:
     name: Detect if Codebase Changed
@@ -145,8 +151,10 @@ jobs:
     permissions:
       id-token: write
       contents: write
-    needs: [test, lint, detect_changes]
-    if: needs.detect_changes.outputs.changed == 'true' && github.event_name == 'push' && (github.ref == 'refs/heads/main' || github.event.pull_request.merged == true)  # Only run on push to main or merge to main
+    outputs:
+      is_stable: ${{ steps.set-version.outputs.is_stable }}
+    needs: [test, lint, validate-docs, detect_changes]
+    if: needs.detect_changes.outputs.changed == 'true' && github.event_name == 'push' && github.ref == 'refs/heads/main'
     steps:
       - name: Checkout Code
         uses: actions/checkout@v3
@@ -198,15 +206,17 @@ jobs:
           if [[ "v$CURRENT_VERSION" != "$LAST_TAG" || "$TAG_COUNT" -eq 0 ]]; then
             echo "VERSION=$CURRENT_VERSION" >> $GITHUB_ENV
             echo "is_stable=true" >> $GITHUB_ENV
+            echo "is_stable=true" >> $GITHUB_OUTPUT
           else
             # Increment minor version for dev version
             MAJOR=$(echo "$CURRENT_VERSION" | cut -d. -f1)
             MINOR=$(echo "$CURRENT_VERSION" | cut -d. -f2)
             PATCH=$(echo "$CURRENT_VERSION" | cut -d. -f3)
-            NEXT_MINOR=$((MINOR + 1))
-            DEV_VERSION="${MAJOR}.${NEXT_MINOR}.0.dev$(date +%Y%m%d%H%M)"
+            NEXT_PATCH=$((PATCH + 1))
+            DEV_VERSION="${MAJOR}.${MINOR}.${NEXT_PATCH}.dev$(date +%Y%m%d%H%M)"
             echo "VERSION=$DEV_VERSION" >> $GITHUB_ENV
             echo "is_stable=false" >> $GITHUB_ENV
+            echo "is_stable=false" >> $GITHUB_OUTPUT
           fi
 
       - name: Inject Version Into __init__.py
@@ -231,3 +241,39 @@ jobs:
         run: |
             git tag "v${VERSION}"
             git push origin "v${VERSION}"
+
+  publish-docs:
+    name: Publish Documentation to GitHub Pages
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    needs: [validate-docs, publish]
+    if: needs.publish.result == 'success' && needs.publish.outputs.is_stable == 'true'
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install .[docs]
+
+      - name: Build documentation
+        run: mkdocs build --strict
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: ./site
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

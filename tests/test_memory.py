@@ -1,6 +1,10 @@
 import os
+from copy import deepcopy
 import json
 import time
+import pickle
+import tempfile
+from pathlib import Path
 
 import pytest
 import redis
@@ -363,6 +367,18 @@ def test_append_to_list():
 
 
 @pytest.mark.depends(on=['test_set_and_delete_attribute'])
+def test_insert_to_list():
+    """Test that inserting to a list attribute persists across Memory instances."""
+    mem1 = Memory()
+    mem1.numbers = [1, 2, 4]
+    assert type(mem1.numbers) == SyncedList
+    mem1.numbers.insert(2, 3)
+
+    mem2 = Memory()
+    assert mem2.numbers == [1, 2, 3, 4]
+
+
+@pytest.mark.depends(on=['test_set_and_delete_attribute'])
 def test_extend_list():
     """Test that extending a list attribute persists across Memory instances."""
     mem1 = Memory()
@@ -423,3 +439,188 @@ def test_update_nested_dict():
     mem2 = Memory()
     assert type(mem2.data["b"]) == SyncedDict
     assert mem2.data == {"a": 1, "b": {"c": 2, "d": 3}}
+
+
+def test_set_and_get_as_list():
+    """Test setting and getting a list value in Memory."""
+    mem = Memory()
+    expected = [1, 2, 3]
+    mem.items = expected
+    assert isinstance(mem.items, SyncedList)
+    assert isinstance(mem.items.aslist(), list)
+
+    new_list = mem.items.aslist()
+    assert new_list == expected
+
+    copied_list = deepcopy(new_list)
+    assert copied_list == expected
+
+
+def test_set_and_get_as_dict():
+    """Test setting and getting a dict value in Memory."""
+    mem = Memory()
+    expected = {"theme": "dark", "volume": 0.75}
+    mem.settings = expected
+    assert isinstance(mem.settings, SyncedDict)
+    assert isinstance(mem.settings.asdict(), dict)
+
+    new_dict = mem.settings.asdict()
+    assert new_dict == expected
+
+    copied_dict = deepcopy(new_dict)
+    assert copied_dict == expected
+
+
+def test_aslist_returns_independent_copy():
+    """Test that .aslist() returns an independent copy."""
+    mem = Memory()
+    mem.items = [1, 2, 3]
+
+    # Get a copy
+    copy1 = mem.items.aslist()
+
+    # Modify the copy
+    copy1.append(4)
+
+    # Original should be unchanged
+    assert mem.items.aslist() == [1, 2, 3]
+    assert copy1 == [1, 2, 3, 4]
+
+
+def test_asdict_returns_independent_copy():
+    """Test that .asdict() returns an independent copy."""
+    mem = Memory()
+    mem.settings = {"theme": "dark"}
+
+    # Get a copy
+    copy1 = mem.settings.asdict()
+
+    # Modify the copy
+    copy1["theme"] = "light"
+
+    # Original should be unchanged
+    assert mem.settings.asdict() == {"theme": "dark"}
+    assert copy1 == {"theme": "light"}
+
+
+def test_pickle_aslist_to_file():
+    """Test that .aslist() result can be pickled to a file."""
+    mem = Memory()
+    mem.items = [{"role": "user", "content": "hello"}]
+
+    plain_list = mem.items.aslist()
+
+    # Pickle to file
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.pkl') as f:
+        temp_path = Path(f.name)
+        pickle.dump(plain_list, f)
+
+    try:
+        # Unpickle from file
+        with open(temp_path, 'rb') as f:
+            loaded = pickle.load(f)
+
+        assert loaded == [{"role": "user", "content": "hello"}]
+    finally:
+        temp_path.unlink()
+
+
+def test_pickle_asdict_to_file():
+    """Test that .asdict() result can be pickled to a file."""
+    mem = Memory()
+    mem.config = {"api_key": "secret", "timeout": 30}
+
+    plain_dict = mem.config.asdict()
+
+    # Pickle to file
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.pkl') as f:
+        temp_path = Path(f.name)
+        pickle.dump(plain_dict, f)
+
+    try:
+        # Unpickle from file
+        with open(temp_path, 'rb') as f:
+            loaded = pickle.load(f)
+
+        assert loaded == {"api_key": "secret", "timeout": 30}
+    finally:
+        temp_path.unlink()
+
+
+def test_synced_list_mutations_persist():
+    """Test that mutations to SyncedList actually persist."""
+    mem = Memory()
+    mem.items = [1, 2, 3]
+
+    # Mutate via proxy
+    mem.items.append(4)
+    mem.items.extend([5, 6])
+
+    # Verify persisted
+    assert mem.items.aslist() == [1, 2, 3, 4, 5, 6]
+
+
+def test_synced_dict_mutations_persist():
+    """Test that mutations to SyncedDict actually persist."""
+    mem = Memory()
+    mem.config = {"a": 1}
+
+    # Mutate via proxy
+    mem.config["b"] = 2
+    mem.config.update({"c": 3})
+
+    # Verify persisted
+    assert mem.config.asdict() == {"a": 1, "b": 2, "c": 3}
+
+
+def test_nested_list_of_dicts():
+    """Test list containing dicts can be safely copied."""
+    mem = Memory()
+    mem.messages = [
+        {"role": "user", "content": "hi"},
+        {"role": "assistant", "content": "hello"}
+    ]
+
+    # Get as plain list
+    plain = mem.messages.aslist()
+
+    # Should be picklable
+    pickled = pickle.dumps(plain)
+    unpickled = pickle.loads(pickled)
+
+    assert unpickled == [
+        {"role": "user", "content": "hi"},
+        {"role": "assistant", "content": "hello"}
+    ]
+
+
+def test_cannot_pickle_synced_objects_directly():
+    """Test that SyncedList/SyncedDict can't be pickled (have thread locks)."""
+    mem = Memory()
+    mem.items = [1, 2, 3]
+
+    # This should fail (has thread locks)
+    with pytest.raises((TypeError, pickle.PicklingError)):
+        pickle.dumps(mem.items)
+
+    # But .aslist() works
+    assert pickle.dumps(mem.items.aslist())  # No error
+
+
+def test_external_library_deepcopy_compatibility():
+    """Simulate external library (like LiteLLM) doing deepcopy."""
+    mem = Memory()
+    mem.messages = [
+        {"role": "system", "content": "You are helpful"},
+        {"role": "user", "content": "Hello"}
+    ]
+
+    # External library gets the data
+    messages = mem.messages.aslist()
+
+    # External library does deepcopy (like LiteLLM logging)
+    copied = deepcopy(messages)
+
+    # Should work without errors
+    assert copied == messages
+    assert copied is not messages  # Actually copied

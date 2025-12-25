@@ -1,4 +1,4 @@
-__version__ = "0.3.2"
+__version__ = "0.3.3"
 
 import json
 import logging
@@ -10,7 +10,7 @@ from typing import Any
 import redis
 
 logger = logging.getLogger("redis_memory")
-logger.setLevel(os.environ.get("MEMORY_LOG_LEVEL", 'WARNING'))
+logger.setLevel(os.environ.get("MEMORY_LOG_LEVEL", "WARNING"))
 
 
 class SyncedList(list):
@@ -30,8 +30,25 @@ class SyncedList(list):
         super().extend(iterable)
         self._parent.sync(self._topmost_key)
 
+    def insert(self, index, item):
+        super().insert(index, item)
+        self._parent.sync(self._topmost_key)
+
     def sync(self, name: str):
         self._parent.sync(self._topmost_key)
+
+    def aslist(self):
+        """Return a plain Python list, recursively converting nested
+        SyncedList/SyncedDict objects."""
+        result = []
+        for item in self:
+            if isinstance(item, SyncedList):
+                result.append(item.aslist())
+            elif isinstance(item, SyncedDict):
+                result.append(item.asdict())
+            else:
+                result.append(item)
+        return result
 
 
 class SyncedDict(dict):
@@ -54,9 +71,21 @@ class SyncedDict(dict):
     def sync(self, name: str):
         self._parent.sync(self._topmost_key)
 
+    def asdict(self):
+        """Return a plain Python dict, recursively converting nested
+        SyncedList/SyncedDict objects."""
+        result = {}
+        for key, value in self.items():
+            if isinstance(value, SyncedList):
+                result[key] = value.aslist()
+            elif isinstance(value, SyncedDict):
+                result[key] = value.asdict()
+            else:
+                result[key] = value
+        return result
 
-def wrap_sync(obj: (list | dict), parent, topmost_key: str
-              ):  # Add topmost_key parameter
+
+def wrap_sync(obj: list | dict, parent, topmost_key: str):  # Add topmost_key parameter
     """Wrap an object to synchronize its attributes with Redis."""
     if isinstance(obj, dict):
         return SyncedDict(obj, parent, topmost_key)
@@ -101,14 +130,16 @@ class Memory:
     {'a': 1}
     """
 
-    def __init__(self,
-                 redis_hostname: str = 'redis',
-                 redis_port: int = 6379,
-                 redis_prefix: str = 'memory:'):
+    def __init__(
+        self,
+        redis_hostname: str = "redis",
+        redis_port: int = 6379,
+        redis_prefix: str = "memory:",
+    ):
         """Initialize the Memory instance and flush any queued
         updates."""
-        self._host = os.environ.get('REDIS_HOST', redis_hostname)
-        self._port = int(os.environ.get('REDIS_PORT', redis_port))
+        self._host = os.environ.get("REDIS_HOST", redis_hostname)
+        self._port = int(os.environ.get("REDIS_PORT", redis_port))
         self._prefix = redis_prefix
         self._timeout = 0.5  # Seconds
 
@@ -185,8 +216,8 @@ class Memory:
         # Flush the entire queue
         while self._queue:
             key, payload = self._queue.pop(0)
-            value = payload.get('value')
-            queued_timestamp = payload.get('last_modified')
+            value = payload.get("value")
+            queued_timestamp = payload.get("last_modified")
 
             # Get current Redis value and timestamp
             raw = client.get(self._key(key))
@@ -222,8 +253,9 @@ class Memory:
         """Start the background thread to flush the queue regularly."""
         if self._thread is None or not self._thread.is_alive():
             self._stop_event.clear()
-            self._thread = threading.Thread(target=self._background_flush_loop,
-                                            daemon=True)
+            self._thread = threading.Thread(
+                target=self._background_flush_loop, daemon=True
+            )
             self._thread.start()
 
     def stop_background_flush(self):
@@ -240,12 +272,15 @@ class Memory:
             client = self._connect()
             pattern = f"{self._prefix}*"
             for key in client.scan_iter(match=pattern):
-                name = key.decode().replace(self._prefix, '', 1)
+                name = key.decode().replace(self._prefix, "", 1)
                 try:
                     raw = client.get(key)
                     obj = json.loads(raw)
-                    if (isinstance(obj, dict) and "value" in obj
-                            and "last_modified" in obj):
+                    if (
+                        isinstance(obj, dict)
+                        and "value" in obj
+                        and "last_modified" in obj
+                    ):
                         self._attributes[name] = obj["value"]
                         self._last_modified[name] = obj["last_modified"]
                     else:
@@ -263,7 +298,7 @@ class Memory:
         Raises:
             ValueError: If the value is not serializable.
         """
-        if name.startswith('_'):
+        if name.startswith("_"):
             super().__setattr__(name, value)
             return
 
@@ -289,8 +324,11 @@ class Memory:
 
         try:
             client = self._connect()
-        except (redis.exceptions.ConnectionError, redis.exceptions.TimeoutError,
-                OSError):
+        except (
+            redis.exceptions.ConnectionError,
+            redis.exceptions.TimeoutError,
+            OSError,
+        ):
             logger.warning("Redis unavailable. Queuing %s = %s", name, value)
             self._queue.append((name, payload))
             return
@@ -304,7 +342,7 @@ class Memory:
         Raises:
             AttributeError: If the attribute is not found.
         """
-        if name.startswith('_'):
+        if name.startswith("_"):
             return super().__getattribute__(name)
 
         try:
@@ -345,8 +383,7 @@ class Memory:
         try:
             client = self._connect()
         except Exception:
-            logger.warning("Redis unavailable. Queuing %s = %s", name,
-                           local_value)
+            logger.warning("Redis unavailable. Queuing %s = %s", name, local_value)
             self._queue.append((name, payload))
             return
 
@@ -364,10 +401,7 @@ class Memory:
 
         if local_last_modified >= redis_last_modified:
             # Local is newer, update Redis
-            payload = {
-                "value": local_value,
-                "last_modified": local_last_modified
-            }
+            payload = {"value": local_value, "last_modified": local_last_modified}
             client.set(self._key(name), json.dumps(payload))
             self._is_connected_to_redis_at_least_once = True
         elif redis_last_modified > local_last_modified:
@@ -382,7 +416,7 @@ class Memory:
         Raises:
             AttributeError: If the attribute is not found.
         """
-        if name.startswith('_'):
+        if name.startswith("_"):
             super().__delattr__(name)
             return
 
@@ -420,15 +454,19 @@ class ConversationMemory(Memory):
         redis_prefix (str): Base prefix for keys (default 'memory:').
     """
 
-    def __init__(self,
-                 conversation_id: str,
-                 redis_hostname='redis',
-                 redis_port=6379,
-                 redis_prefix='memory:'):
+    def __init__(
+        self,
+        conversation_id: str,
+        redis_hostname="redis",
+        redis_port=6379,
+        redis_prefix="memory:",
+    ):
         self._conversation_id = conversation_id
-        super().__init__(redis_hostname=redis_hostname,
-                         redis_port=redis_port,
-                         redis_prefix=redis_prefix)
+        super().__init__(
+            redis_hostname=redis_hostname,
+            redis_port=redis_port,
+            redis_prefix=redis_prefix,
+        )
 
     def _key(self, name):
         # Override to include conversation_id in the Redis key

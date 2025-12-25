@@ -3,19 +3,21 @@
 ![Downloads](https://static.pepy.tech/badge/redis-memory)
 ![Monthly Downloads](https://static.pepy.tech/badge/redis-memory/month)
 ![License](https://img.shields.io/github/license/sinan-ozel/redis-memory.svg)
+[![Documentation](https://img.shields.io/badge/docs-github--pages-blue)](https://sinan-ozel.github.io/redis-memory/)
 
 
 # 🗄️ redis-memory
 
-A Python class for seamless, multiprocessing-safe, persistent key-value storage
+A production-ready Python class for seamless, multiprocessing-safe, persistent key-value storage
 using Redis as a backend. If Redis is unavailable, values are cached locally
 and queued for syncing when Redis comes back online. All values are serialized
 as JSON, and you interact with it using natural Python attribute access.
 
+# Purpose
+
 The intention is to use this with agentic workflows deployed as microservices,
-allowing for multiple instances of the same pod. (Hence the name ``memory'')
-That said, this is probably a good alternative for state management in
-microservice architecture where multiple pods are deployed in parallel.
+allowing for multiple instances of the same pod to share their state.
+
 
 ## ✨ Features
 
@@ -62,16 +64,75 @@ with Memory() as memory:
     print(memory.session)  # "active"
 ```
 
-## 🗂️ Namespacing with ConversationMemory
+## � Auto-Synced Collections
 
-For chatbots or multi-user apps, use `ConversationMemory` to isolate keys:
+Lists and dictionaries are automatically wrapped as `SyncedList` and `SyncedDict`, which sync changes to Redis immediately:
 
 ```python
+mem = Memory()
+mem.items = [1, 2, 3]
+mem.items.append(4)  # Automatically syncs to Redis
+
+mem2 = Memory()
+print(mem2.items)  # [1, 2, 3, 4]
+
+mem.config = {"theme": "dark"}
+mem.config["lang"] = "en"  # Automatically syncs to Redis
+print(mem2.config)  # {'theme': 'dark', 'lang': 'en'}
+```
+
+**Nested structures** work too:
+```python
+mem.data = {"user": {"preferences": {"color": "blue"}}}
+mem.data["user"]["preferences"]["color"] = "red"  # Syncs!
+```
+
+### Converting to Plain Python Types
+
+For libraries that need plain Python objects (serialization, pickling, etc.):
+
+```python
+mem.items = [1, 2, 3]
+plain_list = mem.items.aslist()  # Returns regular list
+
+mem.config = {"key": "value"}
+plain_dict = mem.config.asdict()  # Returns regular dict
+
+# Now you can pickle, deepcopy, or pass to external libraries
+import pickle
+pickle.dump(plain_list, file)  # Works!
+```
+
+## 🗂️ Namespacing
+
+By default, `redis-memory` uses `memory:` as its Redis prefix.
+
+Set that with `REDIS_PREFIX`:
+```.env
+REDIS_PREFIX="my_service_state:"
+```
+
+```python
+from redis_memory import Memory
+
+mem = Memory()
+mem.state = {"step": 1}
+print(mem.state)  # {'step': 1}
+```
+
+## Agents
+
+Use the specific class `ConversationMemory` as an agent memory:
+
+```python
+# TODO: Expand with a real conversation object and/or LiteLLM
+
 from redis_memory import ConversationMemory
 
-conv_mem = ConversationMemory(conversation_id="user123")
-conv_mem.state = {"step": 1}
-print(conv_mem.state)  # {'step': 1}
+conversation_id = uuid()
+
+mem = ConversationMemory(conversation_id=conversation_id)
+mem.messages = messages  # The messages payload to an LLM.
 ```
 
 ## ⚙️ Environment Variables
@@ -90,17 +151,37 @@ print(conv_mem.state)  # {'step': 1}
 
 ### 🧪 Running Tests
 
-- **With Devcontainer**: Open in VS Code, and use the built-in test tasks.
-- **With Docker directly**:
-  ```sh
-  docker compose up -d redis
-  docker run --rm -it -v $PWD:/workspace -w /workspace python:3.11 bash
-  # Inside container:
-  pip install -e .
-  pytest
-  ```
+**With a Development Container**: Open in VS Code, and start the development
+container. You do not need to install anything other than VS Code and docker.
+(Shift/Cmd + P and check under ``Dev Containers'')
 
-- Or use the tasks in `.vscode/tasks.json` for one-click testing.
+Run the two VS code tasks, test and reformat, before making a PR. These are
+the same as the tests that will run on the CI/CD pipeline.
+
+**Without Anything**: Just write the code, and add your unit tests.
+(Test-Driven Development)
+Run the following command:
+```bash
+docker-compose up --build --remove-orphans --force-recreate --abort-on-container-exit --exit-code-from test
+```
+
+The only requirement is `docker`.
+
+**Virtual Env**: I did not add support for the Python `venv`. However, all of
+the requirements are captured in pyproject.toml. You _should_ be able to use the
+following commands to set up a venv with all of the requirements.
+
+```bash
+python -m venv .venv
+source .venv/bin/activate       # macOS/Linux
+.venv\Scripts\activate          # Windows
+
+pip install --upgrade pip
+pip install .
+pip install .[test]
+pip install .[dev]
+```
+
 
 ### 🤝 Contributing
 

@@ -7,7 +7,6 @@ services:
     image: redis-memory-dev
     volumes:
       - ..:/workspace
-      - /var/run/docker.sock:/var/run/docker.sock
     environment:
       - MEMORY_LOG_LEVEL=DEBUG
       - PYTHONPATH=/workspace/src
