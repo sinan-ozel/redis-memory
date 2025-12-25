@@ -2,7 +2,7 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "Reformat Code (Run outside the .devcontainer)",
+      "label": "reformat",
       "type": "shell",
       "command": "docker compose -f reformat/docker-compose.yml up --build --abort-on-container-exit",
       "problemMatcher": [],
@@ -20,7 +20,7 @@
       }
     },
     {
-      "label": "Run Unit Tests in Docker (Run outside the .devcontainer)",
+      "label": "test",
       "type": "shell",
       "command": "docker-compose up --build --remove-orphans --force-recreate --abort-on-container-exit --exit-code-from test",
       "options": {
@@ -52,6 +52,24 @@
         "isDefault": true
       },
       "problemMatcher": [],
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "focus": false,
+        "panel": "shared",
+        "showReuseMessage": true,
+        "clear": false
+      }
+    },
+    {
+      "label": "validate-docs",
+      "type": "shell",
+      "command": "docker compose -f docs-validate/docker-compose.yml up --build --abort-on-container-exit",
+      "problemMatcher": [],
+      "group": {
+        "kind": "build",
+        "isDefault": false
+      },
       "presentation": {
         "echo": true,
         "reveal": "always",

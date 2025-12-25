@@ -9,12 +9,23 @@
     "source=${localEnv:HOME}/.gitconfig,target=/root/.gitconfig,type=bind,consistency=cached,readonly",
     "source=${localEnv:HOME}/.ssh,target=/root/.ssh,type=bind,consistency=cached,readonly"
   ],
+  "features": {
+    "ghcr.io/devcontainers/features/docker-in-docker:2": {
+      "version": "latest",
+      "moby": false,
+      "dockerDashComposeVersion": "v2",
+      "enableNonRootDocker": "false"
+    },
+      "ghcr.io/devcontainers/features/github-cli:1": {}
+  },
   "customizations": {
     "vscode": {
       "settings": {
         "python.defaultInterpreterPath": "/usr/local/bin/python"
       },
       "extensions": [
+        "github.copilot",
+        "github.copilot-chat",
         "cweijan.vscode-redis-client",
         "ms-python.python",
         "ms-python.vscode-pylance",
