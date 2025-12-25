@@ -19,6 +19,9 @@ jobs:
     steps:
       - name: Checkout Code
         uses: actions/checkout@v2
+        with:
+          ref: ${{ github.head_ref || github.ref }}
+          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup Docker
         uses: docker/setup-buildx-action@v2
@@ -32,13 +35,16 @@ jobs:
           git config --global user.email "github-actions@github.com"
           git config --global user.name "github-actions"
           git add .
-          git commit -m "Auto reformat code via workflow" || echo "No changes to commit"
+          git diff --staged --quiet || git commit -m "Auto reformat code via workflow"
 
       - name: Push changes
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        if: github.event_name == 'pull_request'
         run: |
-          git remote set-url origin https://x-access-token:${GITHUB_TOKEN}@github.com/${{ github.repository }}
+          git push origin HEAD:${{ github.head_ref }}
+
+      - name: Push changes
+        if: github.event_name == 'push'
+        run: |
           git push origin HEAD:${{ github.ref }}
 
   lint:
@@ -206,8 +212,8 @@ jobs:
             MAJOR=$(echo "$CURRENT_VERSION" | cut -d. -f1)
             MINOR=$(echo "$CURRENT_VERSION" | cut -d. -f2)
             PATCH=$(echo "$CURRENT_VERSION" | cut -d. -f3)
-            NEXT_MINOR=$((MINOR + 1))
-            DEV_VERSION="${MAJOR}.${NEXT_MINOR}.0.dev$(date +%Y%m%d%H%M)"
+            NEXT_PATCH=$((PATCH + 1))
+            DEV_VERSION="${MAJOR}.${MINOR}.${NEXT_PATCH}.dev$(date +%Y%m%d%H%M)"
             echo "VERSION=$DEV_VERSION" >> $GITHUB_ENV
             echo "is_stable=false" >> $GITHUB_ENV
             echo "is_stable=false" >> $GITHUB_OUTPUT
