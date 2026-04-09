@@ -132,6 +132,33 @@ def test_attribute_persistence_across_instances():
     assert isinstance(obj["last_modified"], int)
 
 
+def test_set_is_non_blocking_when_redis_unavailable(monkeypatch):
+    """Test that writes do not block repeatedly when Redis is unavailable.
+
+    After the first failed connection attempt activates the circuit breaker,
+    subsequent writes must queue immediately without waiting for the
+    connection timeout.
+    """
+    monkeypatch.setenv('REDIS_HOST', 'nonexistent-host')
+
+    mem = Memory()
+    mem.warmup = True  # First write: triggers circuit breaker (may block once)
+
+    start = time.time()
+    for i in range(10):
+        setattr(mem, f'key_{i}', i)
+    elapsed = time.time() - start
+
+    # 10 writes should complete well under the single timeout (0.5s),
+    # proving the circuit breaker prevents repeated blocking
+    assert elapsed < mem._timeout, (
+        f"10 writes took {elapsed:.3f}s — expected < {mem._timeout}s. "
+        "Writes are still blocking on connection timeout."
+    )
+    assert all(mem._attributes.get(f'key_{i}') == i for i in range(10))
+    assert len(mem._queue) >= 10
+
+
 def test_queue_flush_when_redis_restored(monkeypatch):
     """Test queueing when Redis is down and flushing when it's restored."""
 

@@ -1,16 +1,12 @@
-__version__ = "0.3.4"
+__version__ = "0.4.1"
 
 import json
-import logging
 import os
 import threading
 import time
 from typing import Any
 
 import redis
-
-logger = logging.getLogger("redis_memory")
-logger.setLevel(os.environ.get("MEMORY_LOG_LEVEL", "WARNING"))
 
 
 class SyncedList(list):
@@ -151,6 +147,8 @@ class Memory:
         self._thread = None
 
         self._is_connected_to_redis_at_least_once = False
+        self._redis_available = None  # None=unknown, True=up, False=down
+        self._redis_last_checked = 0.0
 
         self.start_background_flush()
 
@@ -209,6 +207,7 @@ class Memory:
         while True:
             try:
                 client = self._connect()
+                self._redis_available = True
                 break  # Exit loop if connection succeeds
             except Exception:
                 time.sleep(1)  # Wait before retrying
@@ -286,10 +285,10 @@ class Memory:
                     else:
                         self._attributes[name] = obj
                     self._is_connected_to_redis_at_least_once = True
-                except Exception as e:
-                    logger.warning("Failed to load key %s: %s", key, e)
+                except Exception:
+                    pass
         except Exception:
-            logger.warning("Redis unavailable. Cannot preload attributes.")
+            pass
 
     def __setattr__(self, name, value):
         """Set an attribute. Store in Redis if available, otherwise
@@ -305,7 +304,6 @@ class Memory:
         try:
             _ = json.dumps(value)
         except json.JSONDecodeError:
-            logger.error("Cannot serialize value for attribute '%s'", name)
             raise
 
         self._set(name, value)
@@ -315,21 +313,31 @@ class Memory:
         in Redis.
 
         Updates the local cache and last modified timestamp. If Redis is
-        unavailable, queues the update for later syncing.
+        unavailable, queues the update for later syncing. A circuit breaker
+        prevents repeated blocking connection attempts: after the first
+        failure, writes queue immediately until the retry interval passes.
         """
         self._attributes[name] = wrap_sync(value, self, name)
         timestamp = time.time_ns()
         self._last_modified[name] = timestamp
         payload = {"value": value, "last_modified": timestamp}
 
+        # Circuit breaker: skip connection attempt if Redis recently failed
+        if (self._redis_available is False and
+                time.time() - self._redis_last_checked < self._timeout * 10):
+            self._queue.append((name, payload))
+            return
+
         try:
             client = self._connect()
+            self._redis_available = True
         except (
             redis.exceptions.ConnectionError,
             redis.exceptions.TimeoutError,
             OSError,
         ):
-            logger.warning("Redis unavailable. Queuing %s = %s", name, value)
+            self._redis_available = False
+            self._redis_last_checked = time.time()
             self._queue.append((name, payload))
             return
 
@@ -348,7 +356,6 @@ class Memory:
         try:
             client = self._connect()
         except Exception:
-            logger.warning("Memory cannot access redis to retrieve %s.", name)
             value = self._attributes.get(name)  # Fall back to local cache
             if value is not None:
                 return value
@@ -383,7 +390,6 @@ class Memory:
         try:
             client = self._connect()
         except Exception:
-            logger.warning("Redis unavailable. Queuing %s = %s", name, local_value)
             self._queue.append((name, payload))
             return
 
@@ -431,7 +437,6 @@ class Memory:
         try:
             client = self._connect()
         except Exception:
-            logger.warning("Memory cannot access redis to delete %s.", name)
             timestamp = time.time_ns()
             payload = {"value": None, "last_modified": timestamp}
             self._queue.append((name, payload))
