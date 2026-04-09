@@ -323,8 +323,10 @@ class Memory:
         payload = {"value": value, "last_modified": timestamp}
 
         # Circuit breaker: skip connection attempt if Redis recently failed
-        if (self._redis_available is False and
-                time.time() - self._redis_last_checked < self._timeout * 10):
+        if (
+            self._redis_available is False
+            and time.time() - self._redis_last_checked < self._timeout * 10
+        ):
             self._queue.append((name, payload))
             return
 
