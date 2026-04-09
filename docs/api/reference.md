@@ -43,7 +43,6 @@ Complete API documentation for redis-memory.
 | `REDIS_HOST` | `redis` | Redis server hostname |
 | `REDIS_PORT` | `6379` | Redis server port |
 | `REDIS_PREFIX` | `memory:` | Key prefix for namespacing |
-| `MEMORY_LOG_LEVEL` | `WARNING` | Logging level (DEBUG, INFO, WARNING, ERROR) |
 
 ## Exceptions
 

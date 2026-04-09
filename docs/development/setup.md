@@ -179,7 +179,6 @@ Create a `.env` file for local development:
 REDIS_HOST=localhost
 REDIS_PORT=6379
 REDIS_PREFIX=dev:
-MEMORY_LOG_LEVEL=DEBUG
 ```
 
 Load it in your code:
