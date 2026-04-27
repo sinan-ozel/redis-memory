@@ -146,9 +146,8 @@ class Memory:
         self._stop_event = threading.Event()
         self._thread = None
 
+        self._redis_available = False  # owned exclusively by the background thread
         self._is_connected_to_redis_at_least_once = False
-        self._redis_available = None  # None=unknown, True=up, False=down
-        self._redis_last_checked = 0.0
 
         self.start_background_flush()
 
@@ -159,20 +158,16 @@ class Memory:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        """Ensure Redis is up and queue is flushed before exit."""
-        # Wait for Redis to be available
-        while True:
-            try:
-                self._connect()
-                break
-            except Exception:
-                if not self._is_connected_to_redis_at_least_once:
-                    return  # Do not try to flush the changes.
-                time.sleep(1)
-
-        # Flush any remaining queue
+        """Flush any remaining queue then stop the background thread."""
         if self._queue:
-            self._flush_queue()
+            while True:
+                try:
+                    self._flush_queue()
+                    break
+                except Exception:
+                    if not self._is_connected_to_redis_at_least_once:
+                        break  # Never connected; give up.
+                    time.sleep(1)
 
         self.stop_background_flush()
 
@@ -197,35 +192,26 @@ class Memory:
         return f"{self._prefix}{name}"
 
     def _flush_queue(self):
-        """Flush all queued updates to Redis.
+        """Attempt one flush of the queue to Redis.
 
-        For each item in the queue, compare the queued timestamp with
-        the timestamp stored in Redis. If the Redis value is newer, skip
-        the update or deletion. Otherwise, update or delete the Redis
-        key accordingly.
+        Connects once; raises on failure so the caller can apply
+        backoff. For each queued item, skips writes where Redis already
+        holds a newer timestamp.
         """
-        while True:
-            try:
-                client = self._connect()
-                self._redis_available = True
-                break  # Exit loop if connection succeeds
-            except Exception:
-                time.sleep(1)  # Wait before retrying
+        client = self._connect()  # raises on failure
+        self._is_connected_to_redis_at_least_once = True
 
-        # Flush the entire queue
         while self._queue:
             key, payload = self._queue.pop(0)
             value = payload.get("value")
             queued_timestamp = payload.get("last_modified")
 
-            # Get current Redis value and timestamp
             raw = client.get(self._key(key))
             redis_timestamp = 0
             if raw is not None:
                 obj = json.loads(raw)
                 redis_timestamp = obj.get("last_modified", 0)
 
-            # If Redis timestamp is later than queued, skip this item
             if redis_timestamp > queued_timestamp:
                 continue
 
@@ -233,20 +219,28 @@ class Memory:
                 client.delete(self._key(key))
             else:
                 client.set(self._key(key), json.dumps(payload))
-            self._is_connected_to_redis_at_least_once = True
 
     def _background_flush_loop(self):
-        """Background thread loop that periodically flushes the queue to
-        Redis.
+        """Own the Redis connection state and flush the write queue.
 
-        Continuously checks if there are items in the queue and calls
-        _flush_queue if needed, sleeping for 1 second between checks.
-        Stops when the stop event is set.
+        On each cycle this thread attempts to connect and flush any
+        queued writes. Success sets _redis_available = True and resets
+        the backoff to 1 s. Failure sets _redis_available = False and
+        doubles the wait (capped at 30 s), so the main thread can fall
+        back to local cache without blocking.
         """
+        backoff = 1
         while not self._stop_event.is_set():
-            if self._queue:
-                self._flush_queue()
-            time.sleep(1)
+            try:
+                self._flush_queue()  # raises on connection failure
+                self._redis_available = True
+                backoff = 1
+            except Exception:
+                self._redis_available = False
+                backoff = min(backoff * 2, 30)
+                self._stop_event.wait(backoff)
+                continue
+            self._stop_event.wait(1)
 
     def start_background_flush(self):
         """Start the background thread to flush the queue regularly."""
@@ -265,10 +259,12 @@ class Memory:
             self._thread = None
 
     def _load_from_redis(self):
-        """Load all keys with the current prefix from Redis into
-        local."""
+        """Load all keys with the current prefix from Redis into local
+        cache."""
         try:
             client = self._connect()
+            self._redis_available = True
+            self._is_connected_to_redis_at_least_once = True
             pattern = f"{self._prefix}*"
             for key in client.scan_iter(match=pattern):
                 name = key.decode().replace(self._prefix, "", 1)
@@ -284,11 +280,10 @@ class Memory:
                         self._last_modified[name] = obj["last_modified"]
                     else:
                         self._attributes[name] = obj
-                    self._is_connected_to_redis_at_least_once = True
                 except Exception:
                     pass
         except Exception:
-            pass
+            self._redis_available = False
 
     def __setattr__(self, name, value):
         """Set an attribute. Store in Redis if available, otherwise
@@ -308,118 +303,81 @@ class Memory:
 
         self._set(name, value)
 
-    def _set(self, name: str, value: Any):
-        """Set an attribute value in local cache and attempt to store it
-        in Redis.
+    def _write_to_redis_or_queue(self, name: str, payload: dict):
+        """Write to Redis if available; queue for later if not.
 
-        Updates the local cache and last modified timestamp. If Redis is
-        unavailable, queues the update for later syncing. A circuit breaker
-        prevents repeated blocking connection attempts: after the first
-        failure, writes queue immediately until the retry interval passes.
+        On a connection failure the flag is cleared so subsequent calls
+        skip the attempt until the background thread re-establishes the
+        connection.
         """
+        if self._redis_available:
+            try:
+                client = self._connect()
+                client.set(self._key(name), json.dumps(payload))
+                self._is_connected_to_redis_at_least_once = True
+                return
+            except Exception:
+                self._redis_available = False
+        self._queue.append((name, payload))
+
+    def _set(self, name: str, value: Any):
+        """Update local cache and write through to Redis (or queue if
+        down)."""
         self._attributes[name] = wrap_sync(value, self, name)
         timestamp = time.time_ns()
         self._last_modified[name] = timestamp
-        payload = {"value": value, "last_modified": timestamp}
-
-        # Circuit breaker: skip connection attempt if Redis recently failed
-        if (
-            self._redis_available is False
-            and time.time() - self._redis_last_checked < self._timeout * 10
-        ):
-            self._queue.append((name, payload))
-            return
-
-        try:
-            client = self._connect()
-            self._redis_available = True
-        except (
-            redis.exceptions.ConnectionError,
-            redis.exceptions.TimeoutError,
-            OSError,
-        ):
-            self._redis_available = False
-            self._redis_last_checked = time.time()
-            self._queue.append((name, payload))
-            return
-
-        client.set(self._key(name), json.dumps(payload))
-        self._is_connected_to_redis_at_least_once = True
+        self._write_to_redis_or_queue(
+            name, {"value": value, "last_modified": timestamp}
+        )
 
     def __getattr__(self, name: str) -> Any:
-        """Get an attribute from Redis or fall back to local cache.
+        """Return the attribute, reading from Redis when available.
+
+        Falls back to local cache when Redis is down so the main thread
+        never blocks.
 
         Raises:
-            AttributeError: If the attribute is not found.
+            AttributeError: If the attribute has not been set.
         """
         if name.startswith("_"):
             return super().__getattribute__(name)
 
-        try:
-            client = self._connect()
-        except Exception:
-            value = self._attributes.get(name)  # Fall back to local cache
-            if value is not None:
-                return value
-            raise AttributeError(f"'Memory' object has no attribute '{name}'")
+        if self._redis_available:
+            try:
+                client = self._connect()
+                raw = client.get(self._key(name))
+                if raw is not None:
+                    self._is_connected_to_redis_at_least_once = True
+                    obj = json.loads(raw)
+                    value = obj["value"]
+                    self._attributes[name] = wrap_sync(value, self, name)
+                    self._last_modified[name] = obj["last_modified"]
+                    return self._attributes[name]
+                # Redis is up but key not there yet (still in queue);
+                # fall through to local cache.
+            except Exception:
+                self._redis_available = False
 
-        raw = client.get(self._key(name))
-        if raw is not None:
-            self._is_connected_to_redis_at_least_once = True
-            obj = json.loads(raw)
-            value = obj["value"]
-            self._attributes[name] = wrap_sync(value, self, name)
-            self._last_modified[name] = obj["last_modified"]
-
+        if name in self._attributes:
             return self._attributes[name]
-
         raise AttributeError(f"'Memory' object has no attribute '{name}'")
 
     def sync(self, name: str):
-        """Synchronize the value of a given attribute with Redis.
-
-        If the key does not exist in Redis, write the local value. If it
-        exists, compare last_modified timestamps and update the older
-        one.
-        """
+        """Write the current local value of an attribute to Redis (or
+        queue if down)."""
         if name not in self._attributes:
             raise AttributeError(f"'Memory' object has no attribute '{name}'")
 
-        local_value = self._attributes[name]
-        local_last_modified = self._last_modified.get(name, 0)
-        payload = {"value": local_value, "last_modified": local_last_modified}
-
-        try:
-            client = self._connect()
-        except Exception:
-            self._queue.append((name, payload))
-            return
-
-        raw = client.get(self._key(name))
-
-        if raw is None:
-            # Key does not exist in Redis, write local value
-            client.set(self._key(name), json.dumps(payload))
-            self._is_connected_to_redis_at_least_once = True
-            return
-
-        obj = json.loads(raw)
-        redis_value = obj.get("value", obj)
-        redis_last_modified = obj.get("last_modified", 0)
-
-        if local_last_modified >= redis_last_modified:
-            # Local is newer, update Redis
-            payload = {"value": local_value, "last_modified": local_last_modified}
-            client.set(self._key(name), json.dumps(payload))
-            self._is_connected_to_redis_at_least_once = True
-        elif redis_last_modified > local_last_modified:
-            # Redis is newer, update local
-            self._attributes[name] = wrap_sync(redis_value, self, name)
-            self._last_modified[name] = redis_last_modified
+        self._write_to_redis_or_queue(
+            name,
+            {
+                "value": self._attributes[name],
+                "last_modified": self._last_modified.get(name, 0),
+            },
+        )
 
     def __delattr__(self, name):
-        """Delete an attribute from local cache and Redis (or queue
-        deletion if Redis unavailable).
+        """Remove an attribute from local cache and queue its deletion.
 
         Raises:
             AttributeError: If the attribute is not found.
@@ -431,24 +389,20 @@ class Memory:
         if name not in self._attributes:
             raise AttributeError(f"'Memory' object has no attribute '{name}'")
 
-        # Remove from local cache
         del self._attributes[name]
         if name in self._last_modified:
             del self._last_modified[name]
 
-        try:
-            client = self._connect()
-        except Exception:
-            timestamp = time.time_ns()
-            payload = {"value": None, "last_modified": timestamp}
-            self._queue.append((name, payload))
-
-        try:
-            client.delete(self._key(name))
-            self._is_connected_to_redis_at_least_once = True
-        except UnboundLocalError:
-            # This catch fixes the race conditions where the queue might get to the value before this does.
-            pass
+        timestamp = time.time_ns()
+        if self._redis_available:
+            try:
+                client = self._connect()
+                client.delete(self._key(name))
+                self._is_connected_to_redis_at_least_once = True
+                return
+            except Exception:
+                self._redis_available = False
+        self._queue.append((name, {"value": None, "last_modified": timestamp}))
 
 
 class ConversationMemory(Memory):
