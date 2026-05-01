@@ -8,6 +8,16 @@
 
 # 🗄️ redis-memory
 
+> **⚠️ This repository is no longer maintained.**
+>
+> Development continues at **[synced-memory](https://github.com/sinan-ozel/synced-memory)**, which supports multiple backends, currently both Redis and DragonflyDB.
+>
+> - PyPI: <https://pypi.org/project/synced-memory/>
+> - GitHub: <https://github.com/sinan-ozel/synced-memory>
+> - Docs: <https://sinan-ozel.github.io/synced-memory/latest/>
+>
+> Please migrate to `synced-memory` for continued updates and support.
+
 A production-ready Python class for seamless, multiprocessing-safe, persistent key-value storage
 using Redis as a backend. If Redis is unavailable, values are cached locally
 and queued for syncing when Redis comes back online. All values are serialized

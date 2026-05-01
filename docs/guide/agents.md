@@ -65,6 +65,7 @@ print(mem2.messages)
 from redis_memory import ConversationMemory
 import openai
 
+client = openai.OpenAI()
 conv_id = "user_session_abc"
 mem = ConversationMemory(conversation_id=conv_id)
 
@@ -77,9 +78,9 @@ user_message = {"role": "user", "content": "Tell me a joke"}
 mem.messages.append(user_message)
 
 # Call OpenAI
-response = openai.ChatCompletion.create(
+response = client.chat.completions.create(
     model="gpt-4",
-    messages=mem.messages
+    messages=mem.messages.aslist(),
 )
 
 # Store assistant response
@@ -212,8 +213,8 @@ import uuid
 from datetime import datetime
 
 class ChatBot:
-    def __init__(self, user_id):
-        self.conv_id = f"user_{user_id}_{uuid.uuid4()}"
+    def __init__(self, user_id, conv_id=None):
+        self.conv_id = conv_id or f"user_{user_id}_{uuid.uuid4()}"
         self.memory = ConversationMemory(conversation_id=self.conv_id)
 
         # Initialize conversation
@@ -260,8 +261,8 @@ bot = ChatBot(user_id="alice_123")
 response = bot.send_message("Hello!")
 print(response)  # "Echo: Hello!"
 
-# From another process/pod
-bot2 = ChatBot(user_id="alice_123")
+# From another process/pod — pass the same conv_id to resume the session
+bot2 = ChatBot(user_id="alice_123", conv_id=bot.conv_id)
 history = bot2.get_history()
 print(len(history))  # 2 (user + assistant messages)
 ```

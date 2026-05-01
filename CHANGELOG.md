@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.3] - 2026-04-30
+
+### Changed
+- Added deprecation notice: this repository is no longer maintained. Development
+  continues at [synced-memory](https://github.com/sinan-ozel/synced-memory),
+  which supports multiple backends (Redis and DragonflyDB).
+
 ## [0.4.2] - 2026-04-27
 
 ### Changed

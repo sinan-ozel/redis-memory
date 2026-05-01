@@ -137,15 +137,22 @@ mem.offline_value = "queued"
 
 ## Error Handling
 
+`Memory` never raises on Redis connection failures — it queues writes locally and syncs automatically when Redis comes back. The exceptions you do need to handle are `AttributeError` for missing keys and `TypeError` for values that cannot be serialized to JSON.
+
 ```python
 from redis_memory import Memory
-import redis
 
+mem = Memory()
+
+# Accessing a key that has not been set raises AttributeError
 try:
-    mem = Memory()
-    mem.value = "test"
-except redis.ConnectionError:
-    print("Failed to connect to Redis")
-except Exception as e:
-    print(f"Unexpected error: {e}")
+    value = mem.nonexistent_key
+except AttributeError:
+    print("Key not found")
+
+# Non-JSON-serializable values raise TypeError
+try:
+    mem.bad = object()  # not JSON-serializable
+except TypeError as e:
+    print(f"Cannot store value: {e}")
 ```
