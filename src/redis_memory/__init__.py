@@ -286,8 +286,9 @@ class Memory:
             self._redis_available = False
 
     def __setattr__(self, name, value):
-        """Set an attribute. Store in Redis if available, otherwise
-        queue it.
+        """Set an attribute.
+
+        Store in Redis if available, otherwise queue it.
 
         Raises:
             ValueError: If the value is not serializable.
